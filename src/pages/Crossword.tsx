@@ -53,7 +53,11 @@ const CrosswordGame = () => {
                     <Input
                         key={`${rowIndex}-${colIndex}`}
                         type="text"
-                        //maxLength="1"
+                        inputProps={{
+                            maxLength: 1
+                        }}
+                        maxRows={1}
+                        multiline={false}
                         value={userInput[rowIndex][colIndex]}
                         onChange={(e) => handleInputChange(rowIndex, colIndex, e.target.value)}
                         className="w-10 h-10 text-center m-1"
