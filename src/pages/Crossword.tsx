@@ -48,7 +48,7 @@ const CrosswordGame = () => {
 
     const renderPuzzle = () => {
         return puzzle.map((row, rowIndex) => (
-            <div key={rowIndex} className="flex">
+            <div key={rowIndex} className="wordcel">
                 {row.map((cell, colIndex) => (
                     <Input
                         key={`${rowIndex}-${colIndex}`}
