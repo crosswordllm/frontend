@@ -102,7 +102,20 @@ body {
     min-height: 44px;
 }
 
-.cw-input-lang { flex: 0 1 140px; }
+.cw-lang-label {
+    font-size: 14px;
+    color: var(--cw-muted);
+}
+
+.cw-lang-label strong { color: var(--cw-fg); }
+
+.cw-lang-picker {
+    max-height: 180px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+}
 
 .cw-input:focus {
     outline: 2px solid var(--cw-primary);

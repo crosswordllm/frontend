@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import './Crossword.css';
+import LanguageList from '../components/LanguageList';
 
 interface ClueItem {
     number: number;
@@ -218,12 +219,12 @@ const CrosswordGame = () => {
                             onChange={e => setTopic(e.target.value)}
                             disabled={creating}
                         />
-                        <input
-                            className="cw-input cw-input-lang"
-                            placeholder="Language"
-                            value={language}
-                            onChange={e => setLanguage(e.target.value)}
-                            disabled={creating}
+                    </div>
+                    <div className="cw-lang-label">Language: <strong>{language}</strong></div>
+                    <div className="cw-lang-picker">
+                        <LanguageList
+                            selected={language}
+                            onSelect={lang => { if (!creating) setLanguage(lang); }}
                         />
                     </div>
                     <div className="cw-form-actions">
