@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import './Crossword.css';
 
 interface ClueItem {
     number: number;
@@ -8,8 +9,11 @@ interface ClueItem {
 }
 
 interface CrosswordData {
+    id: string;
     theme: string;
-    date: string;
+    language: string;
+    topic: string;
+    createdAt: string;
     grid: string[][];
     clues: {
         across: ClueItem[];
@@ -17,44 +21,92 @@ interface CrosswordData {
     };
 }
 
-const CELL_SIZE = 44;
+type Dir = 'across' | 'down';
+type Selected = { row: number; col: number; dir: Dir };
+
+const API_BASE = 'https://backend-302501130751.europe-west1.run.app';
 
 const CrosswordGame = () => {
     const [data, setData] = useState<CrosswordData | null>(null);
     const [userInput, setUserInput] = useState<string[][]>([]);
-    const [selected, setSelected] = useState<{ row: number; col: number; dir: 'across' | 'down' } | null>(null);
+    const [selected, setSelected] = useState<Selected | null>(null);
     const [loading, setLoading] = useState(true);
+    const [creating, setCreating] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [completed, setCompleted] = useState(false);
-    const cellNumbers = useRef<Map<string, number>>(new Map());
+    const [showCreate, setShowCreate] = useState(false);
+    const [topic, setTopic] = useState('');
+    const [language, setLanguage] = useState('English');
     const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
-    useEffect(() => {
-        fetch('https://backend-302501130751.europe-west1.run.app/api/crossword')
-            .then(r => {
-                if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                return r.json();
-            })
-            .then((d: CrosswordData) => {
-                setData(d);
-                setUserInput(d.grid.map(row => row.map(() => '')));
+    const cellNumbers = useMemo(() => {
+        const nums = new Map<string, number>();
+        if (data) {
+            for (const cl of [...data.clues.across, ...data.clues.down]) {
+                nums.set(`${cl.row},${cl.col}`, cl.number);
+            }
+        }
+        return nums;
+    }, [data]);
 
-                const nums = new Map<string, number>();
-                for (const cl of [...d.clues.across, ...d.clues.down]) {
-                    nums.set(`${cl.row},${cl.col}`, cl.number);
-                }
-                cellNumbers.current = nums;
-                setLoading(false);
-            })
-            .catch(err => {
-                setError(err.message);
-                setLoading(false);
-            });
+    const selectPuzzle = useCallback((p: CrosswordData) => {
+        setData(p);
+        setUserInput(p.grid.map(row => row.map(() => '')));
+        setSelected(null);
+        setCompleted(false);
     }, []);
+
+    const loadList = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const r = await fetch(`${API_BASE}/api/crossword`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const list: CrosswordData[] = await r.json();
+            if (list && list.length > 0) {
+                selectPuzzle(list[list.length - 1]);
+            } else {
+                setData(null);
+                setShowCreate(true);
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'failed to load');
+        } finally {
+            setLoading(false);
+        }
+    }, [selectPuzzle]);
+
+    useEffect(() => {
+        loadList();
+    }, [loadList]);
+
+    const handleCreate = async () => {
+        setCreating(true);
+        setError(null);
+        try {
+            const r = await fetch(`${API_BASE}/api/crossword`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    language: language || 'English',
+                    topic: topic.trim(),
+                }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const p: CrosswordData = await r.json();
+            selectPuzzle(p);
+            setShowCreate(false);
+            setTopic('');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'failed to create');
+        } finally {
+            setCreating(false);
+        }
+    };
 
     const handleCellClick = (row: number, col: number) => {
         if (!selected || selected.row !== row || selected.col !== col) {
-            setSelected({ row, col, dir: 'across' });
+            setSelected(s => ({ row, col, dir: s?.dir ?? 'across' }));
         } else {
             setSelected(s => s ? { ...s, dir: s.dir === 'across' ? 'down' : 'across' } : null);
         }
@@ -71,7 +123,6 @@ const CrosswordGame = () => {
                 newInput[row][col] = '';
                 setUserInput(newInput);
             } else {
-                // Move backward
                 const { nr, nc } = move(row, col, dir, -1, data.grid);
                 setSelected({ row: nr, col: nc, dir });
                 inputRefs.current.get(`${nr},${nc}`)?.focus();
@@ -83,9 +134,13 @@ const CrosswordGame = () => {
         if (e.key === 'ArrowLeft') { moveFocus(row, col, 'across', -1, data.grid); return; }
         if (e.key === 'ArrowDown') { moveFocus(row, col, 'down', 1, data.grid); return; }
         if (e.key === 'ArrowUp') { moveFocus(row, col, 'down', -1, data.grid); return; }
+        if (e.key === ' ' || e.key === 'Tab') {
+            e.preventDefault();
+            setSelected(s => s ? { ...s, dir: s.dir === 'across' ? 'down' : 'across' } : null);
+        }
     };
 
-    const moveFocus = (row: number, col: number, dir: 'across' | 'down', delta: number, grid: string[][]) => {
+    const moveFocus = (row: number, col: number, dir: Dir, delta: number, grid: string[][]) => {
         const { nr, nc } = move(row, col, dir, delta, grid);
         setSelected({ row: nr, col: nc, dir });
         inputRefs.current.get(`${nr},${nc}`)?.focus();
@@ -93,7 +148,7 @@ const CrosswordGame = () => {
 
     const handleInput = (e: React.ChangeEvent<HTMLInputElement>, row: number, col: number) => {
         if (!data) return;
-        const letter = e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(-1);
+        const letter = e.target.value.replace(/[^\p{L}]/gu, '').toUpperCase().slice(-1);
         const newInput = userInput.map(r => [...r]);
         newInput[row][col] = letter;
         setUserInput(newInput);
@@ -116,7 +171,6 @@ const CrosswordGame = () => {
         const { row: sr, col: sc, dir } = selected;
         if (dir === 'across') {
             if (row !== sr) return false;
-            // Find start and end of this across word
             let start = sc, end = sc;
             while (start > 0 && data.grid[row][start - 1] !== '') start--;
             while (end < data.grid[row].length - 1 && data.grid[row][end + 1] !== '') end++;
@@ -130,113 +184,206 @@ const CrosswordGame = () => {
         }
     };
 
-    if (loading) return <div style={styles.center}>Generating today's puzzle…</div>;
-    if (error) return <div style={styles.center}>Error: {error}</div>;
-    if (!data) return null;
+    const activeClue = useMemo(() => {
+        if (!selected || !data) return null;
+        const list = selected.dir === 'across' ? data.clues.across : data.clues.down;
+        return list.find(cl => isClueActive(cl, selected, data, selected.dir)) ?? null;
+    }, [selected, data]);
 
-    const rows = data.grid.length;
-    const cols = data.grid[0]?.length ?? 0;
+    const rows = data?.grid.length ?? 0;
+    const cols = data?.grid[0]?.length ?? 0;
 
     return (
-        <div style={styles.page}>
-            <h1 style={styles.title}>Daily Crossword</h1>
-            <p style={styles.meta}>{data.date} · <em>{data.theme}</em></p>
+        <div className="cw-page">
+            <header className="cw-header">
+                <h1 className="cw-title">Crossword</h1>
+                <div className="cw-header-actions">
+                    <button
+                        className="cw-btn"
+                        onClick={() => setShowCreate(s => !s)}
+                        disabled={creating}
+                    >
+                        {showCreate ? 'Close' : '+ New Puzzle'}
+                    </button>
+                </div>
+            </header>
 
-            {completed && (
-                <div style={styles.congrats}>🎉 Puzzle complete!</div>
+            {showCreate && (
+                <div className="cw-form">
+                    <div className="cw-form-row">
+                        <input
+                            className="cw-input"
+                            placeholder="Topic (optional, e.g. astronomy)"
+                            value={topic}
+                            onChange={e => setTopic(e.target.value)}
+                            disabled={creating}
+                        />
+                        <input
+                            className="cw-input cw-input-lang"
+                            placeholder="Language"
+                            value={language}
+                            onChange={e => setLanguage(e.target.value)}
+                            disabled={creating}
+                        />
+                    </div>
+                    <div className="cw-form-actions">
+                        <button
+                            className="cw-btn cw-btn-secondary"
+                            onClick={() => setShowCreate(false)}
+                            disabled={creating}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            className="cw-btn"
+                            onClick={handleCreate}
+                            disabled={creating}
+                        >
+                            {creating ? 'Generating…' : 'Generate'}
+                        </button>
+                    </div>
+                </div>
             )}
 
-            <div style={{ display: 'flex', gap: 40, flexWrap: 'wrap', justifyContent: 'center' }}>
-                {/* Grid */}
-                <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: `repeat(${cols}, ${CELL_SIZE}px)`,
-                    gridTemplateRows: `repeat(${rows}, ${CELL_SIZE}px)`,
-                    border: '2px solid #222',
-                }}>
-                    {data.grid.map((row, r) =>
-                        row.map((cell, c) => {
-                            const num = cellNumbers.current.get(`${r},${c}`);
-                            const isActive = selected?.row === r && selected?.col === c;
-                            const highlight = isHighlighted(r, c);
+            {error && <div className="cw-error">Error: {error}</div>}
 
-                            if (cell === '') {
-                                return <div key={`${r},${c}`} style={styles.blackCell} />;
-                            }
+            {loading && <div className="cw-status">Loading puzzles…</div>}
 
-                            return (
-                                <div
-                                    key={`${r},${c}`}
-                                    style={{
-                                        ...styles.whiteCell,
-                                        background: isActive ? '#fde68a' : highlight ? '#bfdbfe' : '#fff',
-                                    }}
-                                    onClick={() => handleCellClick(r, c)}
-                                >
-                                    {num != null && <span style={styles.cellNum}>{num}</span>}
-                                    <input
-                                        ref={el => {
-                                            if (el) inputRefs.current.set(`${r},${c}`, el);
-                                            else inputRefs.current.delete(`${r},${c}`);
-                                        }}
-                                        style={styles.cellInput}
-                                        maxLength={2}
-                                        value={userInput[r]?.[c] ?? ''}
-                                        onChange={e => handleInput(e, r, c)}
-                                        onKeyDown={e => handleKeyDown(e, r, c)}
-                                        onFocus={() => setSelected(s => ({ row: r, col: c, dir: s?.dir ?? 'across' }))}
-                                    />
-                                </div>
-                            );
-                        })
+            {!loading && !data && (
+                <div className="cw-status">
+                    No puzzles yet — tap “+ New Puzzle” to generate one.
+                </div>
+            )}
+
+            {data && (
+                <>
+                    <p className="cw-meta">
+                        <strong>{data.theme || 'Untitled'}</strong>
+                        {data.topic ? ` · ${data.topic}` : ''}
+                        {data.language ? ` · ${data.language}` : ''}
+                    </p>
+
+                    {completed && (
+                        <div className="cw-congrats">🎉 Puzzle complete!</div>
                     )}
-                </div>
 
-                {/* Clues */}
-                <div style={styles.clues}>
-                    <div style={styles.clueCol}>
-                        <h3 style={styles.clueHeader}>Across</h3>
-                        {data.clues.across.map(cl => (
-                            <p
-                                key={cl.number}
-                                style={{
-                                    ...styles.clueItem,
-                                    fontWeight: selected?.dir === 'across' && isClueActive(cl, selected, data, 'across') ? 700 : 400,
-                                }}
-                                onClick={() => {
-                                    setSelected({ row: cl.row, col: cl.col, dir: 'across' });
-                                    inputRefs.current.get(`${cl.row},${cl.col}`)?.focus();
-                                }}
-                            >
-                                <strong>{cl.number}.</strong> {cl.clue}
-                            </p>
-                        ))}
+                    {activeClue && (
+                        <div className="cw-active-clue">
+                            <span className="cw-active-clue-num">
+                                {activeClue.number}
+                                {selected!.dir === 'across' ? 'A' : 'D'}
+                            </span>
+                            {activeClue.clue}
+                        </div>
+                    )}
+
+                    <div className="cw-layout">
+                        <div
+                            className="cw-grid"
+                            style={{
+                                ['--cw-cols' as never]: cols,
+                                ['--cw-rows' as never]: rows,
+                            }}
+                        >
+                            {data.grid.map((row, r) =>
+                                row.map((cell, c) => {
+                                    if (cell === '') {
+                                        return <div key={`${r},${c}`} className="cw-cell-black" />;
+                                    }
+                                    const num = cellNumbers.get(`${r},${c}`);
+                                    const isActive = selected?.row === r && selected?.col === c;
+                                    const highlight = isHighlighted(r, c);
+                                    const cellClass =
+                                        'cw-cell' +
+                                        (isActive ? ' cw-cell-active' : highlight ? ' cw-cell-highlight' : '');
+                                    return (
+                                        <div
+                                            key={`${r},${c}`}
+                                            className={cellClass}
+                                            onClick={() => handleCellClick(r, c)}
+                                        >
+                                            {num != null && <span className="cw-cell-num">{num}</span>}
+                                            <input
+                                                ref={el => {
+                                                    if (el) inputRefs.current.set(`${r},${c}`, el);
+                                                    else inputRefs.current.delete(`${r},${c}`);
+                                                }}
+                                                className="cw-cell-input"
+                                                maxLength={2}
+                                                value={userInput[r]?.[c] ?? ''}
+                                                onChange={e => handleInput(e, r, c)}
+                                                onKeyDown={e => handleKeyDown(e, r, c)}
+                                                onFocus={() =>
+                                                    setSelected(s => ({
+                                                        row: r,
+                                                        col: c,
+                                                        dir: s?.dir ?? 'across',
+                                                    }))
+                                                }
+                                                inputMode="text"
+                                                autoCapitalize="characters"
+                                                autoCorrect="off"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                            />
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <div className="cw-clues">
+                            <div className="cw-clue-col">
+                                <h3>Across</h3>
+                                {data.clues.across.map(cl => {
+                                    const active =
+                                        selected?.dir === 'across' &&
+                                        isClueActive(cl, selected, data, 'across');
+                                    return (
+                                        <p
+                                            key={cl.number}
+                                            className={'cw-clue' + (active ? ' cw-clue-active' : '')}
+                                            onClick={() => {
+                                                setSelected({ row: cl.row, col: cl.col, dir: 'across' });
+                                                inputRefs.current.get(`${cl.row},${cl.col}`)?.focus();
+                                            }}
+                                        >
+                                            <span className="cw-clue-num">{cl.number}.</span>
+                                            {cl.clue}
+                                        </p>
+                                    );
+                                })}
+                            </div>
+                            <div className="cw-clue-col">
+                                <h3>Down</h3>
+                                {data.clues.down.map(cl => {
+                                    const active =
+                                        selected?.dir === 'down' &&
+                                        isClueActive(cl, selected, data, 'down');
+                                    return (
+                                        <p
+                                            key={cl.number}
+                                            className={'cw-clue' + (active ? ' cw-clue-active' : '')}
+                                            onClick={() => {
+                                                setSelected({ row: cl.row, col: cl.col, dir: 'down' });
+                                                inputRefs.current.get(`${cl.row},${cl.col}`)?.focus();
+                                            }}
+                                        >
+                                            <span className="cw-clue-num">{cl.number}.</span>
+                                            {cl.clue}
+                                        </p>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     </div>
-                    <div style={styles.clueCol}>
-                        <h3 style={styles.clueHeader}>Down</h3>
-                        {data.clues.down.map(cl => (
-                            <p
-                                key={cl.number}
-                                style={{
-                                    ...styles.clueItem,
-                                    fontWeight: selected?.dir === 'down' && isClueActive(cl, selected, data, 'down') ? 700 : 400,
-                                }}
-                                onClick={() => {
-                                    setSelected({ row: cl.row, col: cl.col, dir: 'down' });
-                                    inputRefs.current.get(`${cl.row},${cl.col}`)?.focus();
-                                }}
-                            >
-                                <strong>{cl.number}.</strong> {cl.clue}
-                            </p>
-                        ))}
-                    </div>
-                </div>
-            </div>
+                </>
+            )}
         </div>
     );
 };
 
-function move(row: number, col: number, dir: 'across' | 'down', delta: number, grid: string[][]): { nr: number; nc: number } {
+function move(row: number, col: number, dir: Dir, delta: number, grid: string[][]): { nr: number; nc: number } {
     let nr = row + (dir === 'down' ? delta : 0);
     let nc = col + (dir === 'across' ? delta : 0);
     const rows = grid.length;
@@ -249,9 +396,9 @@ function move(row: number, col: number, dir: 'across' | 'down', delta: number, g
 
 function isClueActive(
     cl: ClueItem,
-    selected: { row: number; col: number; dir: 'across' | 'down' } | null,
+    selected: Selected | null,
     data: CrosswordData,
-    dir: 'across' | 'down'
+    dir: Dir
 ): boolean {
     if (!selected) return false;
     const { row: sr, col: sc } = selected;
@@ -267,37 +414,5 @@ function isClueActive(
         return start === cl.row;
     }
 }
-
-const styles: Record<string, React.CSSProperties> = {
-    page: { fontFamily: 'Georgia, serif', maxWidth: 960, margin: '0 auto', padding: 24 },
-    title: { textAlign: 'center', fontSize: 28, marginBottom: 4 },
-    meta: { textAlign: 'center', color: '#555', marginBottom: 20 },
-    center: { textAlign: 'center', padding: 60, fontSize: 18 },
-    congrats: { textAlign: 'center', color: '#16a34a', fontWeight: 'bold', fontSize: 20, marginBottom: 16 },
-    blackCell: { width: CELL_SIZE, height: CELL_SIZE, background: '#222', border: '1px solid #111' },
-    whiteCell: {
-        width: CELL_SIZE, height: CELL_SIZE,
-        border: '1px solid #999',
-        position: 'relative',
-        cursor: 'pointer',
-    },
-    cellNum: {
-        position: 'absolute', top: 2, left: 3,
-        fontSize: 10, lineHeight: 1, color: '#333', pointerEvents: 'none',
-    },
-    cellInput: {
-        position: 'absolute', inset: 0,
-        width: '100%', height: '100%',
-        border: 'none', background: 'transparent',
-        textAlign: 'center', fontSize: 18, fontWeight: 'bold',
-        textTransform: 'uppercase', outline: 'none',
-        paddingTop: 8, cursor: 'pointer',
-        fontFamily: 'Georgia, serif',
-    },
-    clues: { display: 'flex', gap: 32 },
-    clueCol: { minWidth: 200, maxWidth: 280 },
-    clueHeader: { borderBottom: '2px solid #222', paddingBottom: 4, marginBottom: 8 },
-    clueItem: { fontSize: 14, lineHeight: 1.5, margin: '4px 0', cursor: 'pointer' },
-};
 
 export default CrosswordGame;
