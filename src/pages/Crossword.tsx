@@ -30,7 +30,7 @@ const CrosswordGame = () => {
     const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
     useEffect(() => {
-        fetch('/api/crossword')
+        fetch('https://backend-302501130751.europe-west1.run.app/api/crossword')
             .then(r => {
                 if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 return r.json();
